@@ -1,0 +1,219 @@
+syntax = "proto3";
+
+package kepler.v1;
+
+option go_package = "github.com/KailBug/Kepler/gen/go/kepler/v1;keplerv1";
+
+import "kepler/v1/events.proto";
+
+// ============================================================================
+// Worker 面：Kepler-Harness（无状态 Worker）与 keplerd Runtime 之间的协议
+// ============================================================================
+
+service WorkerService {
+  // 注册 Worker 节点并声明能力（支持的 agent_id / 工具集 / 版本）
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+  // 周期性上报存活心跳
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // 主动拉取一个待执行任务（对应 PG SELECT ... FOR UPDATE SKIP LOCKED）
+  rpc AcquireTask(AcquireTaskRequest) returns (AcquireTaskResponse);
+  // 续约租约，防止长任务执行期间租约过期被其他 Worker 接管
+  rpc RenewLease(RenewLeaseRequest) returns (RenewLeaseResponse);
+  // Write-Ahead 事件追加：必须校验 lease_id 与 epoch，拒绝僵尸 Worker 写入
+  rpc AppendEvents(AppendEventsRequest) returns (AppendEventsResponse);
+  // 标记当前任务完成 / 挂起审批 / 失败
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+  rpc SuspendTask(SuspendTaskRequest) returns (SuspendTaskResponse);
+  rpc FailTask(FailTaskRequest) returns (FailTaskResponse);
+}
+
+message Lease {
+  string lease_id = 1;
+  // 单调递增的租约代际号（fencing token），所有写入必须携带并严格匹配
+  int64 epoch = 2;
+  int64 expires_at_ms = 3;
+}
+
+message WorkerTask {
+  string task_id = 1;
+  string session_id = 2;
+  string turn_id = 3;
+  string agent_id = 4;
+  Lease lease = 5;
+  // 该会话的完整历史事件，用于 Harness 通过 sessions.restore 恢复状态后 resume
+  repeated SessionEvent events = 6;
+  // 全链路追踪上下文（W3C traceparent）
+  string traceparent = 7;
+}
+
+message RegisterWorkerRequest {
+  string worker_id = 1;
+  string runtime = 2; // e.g. "kepler-harness-ts"
+  string version = 3;
+  repeated string capabilities = 4;
+}
+
+message RegisterWorkerResponse {
+  int64 heartbeat_interval_ms = 1;
+}
+
+message HeartbeatRequest {
+  string worker_id = 1;
+  int32 active_tasks = 2;
+}
+
+message HeartbeatResponse {}
+
+message AcquireTaskRequest {
+  string worker_id = 1;
+  repeated string capabilities = 2;
+  // 长轮询等待超时时间（毫秒）
+  int32 wait_timeout_ms = 3;
+}
+
+message AcquireTaskResponse {
+  // 若超时无任务则为空
+  WorkerTask task = 1;
+}
+
+message RenewLeaseRequest {
+  string task_id = 1;
+  string lease_id = 2;
+  int64 epoch = 3;
+}
+
+message RenewLeaseResponse {
+  Lease lease = 1;
+}
+
+message AppendEventsRequest {
+  string session_id = 1;
+  string lease_id = 2;
+  int64 epoch = 3;
+  repeated SessionEvent events = 4;
+}
+
+message AppendEventsResponse {
+  int64 last_seq = 1;
+}
+
+message CompleteTaskRequest {
+  string task_id = 1;
+  string lease_id = 2;
+  int64 epoch = 3;
+}
+
+message CompleteTaskResponse {}
+
+message SuspendTaskRequest {
+  string task_id = 1;
+  string lease_id = 2;
+  int64 epoch = 3;
+  string reason = 4;
+}
+
+message SuspendTaskResponse {}
+
+message FailTaskRequest {
+  string task_id = 1;
+  string lease_id = 2;
+  int64 epoch = 3;
+  string error = 4;
+  bool retryable = 5;
+}
+
+message FailTaskResponse {}
+
+// ============================================================================
+// 用户面：Kepler 控制台 / 客户端与 keplerd 之间的协议（与 Harness 用户面同源）
+// ============================================================================
+
+service SessionService {
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc GetSession(GetSessionRequest) returns (GetSessionResponse);
+  rpc SendMessage(SendMessageRequest) returns (SendMessageResponse);
+  rpc ResolveApproval(ResolveApprovalRequest) returns (ResolveApprovalResponse);
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
+  rpc CancelSession(CancelSessionRequest) returns (CancelSessionResponse);
+  rpc StreamEvents(StreamEventsRequest) returns (stream StreamEventResponse);
+}
+
+message CreateSessionRequest {
+  string agent_id = 1;
+}
+
+message CreateSessionResponse {
+  SessionInfo session = 1;
+}
+
+message ListSessionsRequest {
+  string agent_id = 1;
+  int32 limit = 2;
+}
+
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+}
+
+message GetSessionRequest {
+  string session_id = 1;
+}
+
+message GetSessionResponse {
+  SessionInfo session = 1;
+  repeated SessionEvent events = 2;
+}
+
+message SendMessageRequest {
+  string session_id = 1;
+  string text = 2;
+}
+
+message SendMessageResponse {
+  string turn_id = 1;
+}
+
+message ResolveApprovalRequest {
+  string session_id = 1;
+  string tool_call_id = 2;
+  bool approved = 3;
+  string reason = 4;
+}
+
+message ResolveApprovalResponse {}
+
+message ResumeSessionRequest {
+  string session_id = 1;
+}
+
+message ResumeSessionResponse {}
+
+message CancelSessionRequest {
+  string session_id = 1;
+}
+
+message CancelSessionResponse {}
+
+message StreamEventsRequest {
+  string session_id = 1;
+  int64 since_seq = 2;
+}
+
+message DeltaFrame {
+  string turn_id = 1;
+  string text = 2;
+}
+
+message StatusFrame {
+  SessionStatus status = 1;
+  string error = 2;
+}
+
+message StreamEventResponse {
+  oneof frame {
+    SessionEvent event = 1;
+    DeltaFrame delta = 2;
+    StatusFrame status = 3;
+  }
+}
