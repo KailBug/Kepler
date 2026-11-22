@@ -1,0 +1,15 @@
+# Binaries & build outputs
+/bin/
+*.exe
+*.out
+*.test
+
+# Local env & IDE
+.env
+.env.*
+!.env.example
+.idea/
+
+# Frontend
+/web/node_modules/
+/web/dist/
