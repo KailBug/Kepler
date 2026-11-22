@@ -1,0 +1,45 @@
+# Kepler 本地开发依赖编排（按需启用 profile）
+#   核心依赖：docker compose --profile core up -d
+#   可观测性：docker compose --profile core --profile observability up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["core"]
+    environment:
+      POSTGRES_USER: kepler
+      POSTGRES_PASSWORD: kepler_dev_password
+      POSTGRES_DB: kepler
+    ports:
+      - "5432:5432"
+    volumes:
+      - kepler_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kepler -d kepler"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    profiles: ["observability"]
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+
+volumes:
+  kepler_pg_data:
