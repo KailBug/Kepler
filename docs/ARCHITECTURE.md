@@ -51,8 +51,9 @@
 
 ### 双项目联动设计 (Dual-Repo Synergy)
 
-- **Project A — Agent Harness（TypeScript）**：专注于 AI 原生执行循环、Schema 校验（Zod）、流式输出与多范式编排（ReAct / Plan-and-Execute），可独立运行，也可作为被托管的执行引擎接入底座。
-- **Project B — AgentSphere-Lite（Golang）**：专注于高并发调度、持久化状态机、容器/沙箱隔离池与 MCP 安全网关。通过标准协议（gRPC / HTTP / MCP）托管 Project A，实战验证**异构、跨语言 Agent 纳管**能力。
+- **Project A — Agent Harness（TypeScript）**：专注于 AI 原生执行循环、Schema 校验（Zod）、流式输出与多范式编排（ReAct / Plan-and-Execute），可独立运行（内置本地 Web 交互入口），也可作为被托管的执行引擎接入底座。
+- **Project B — AgentSphere-Lite（Golang）**：专注于高并发调度、持久化状态机、容器/沙箱隔离池与 MCP 安全网关。通过 **Connect-RPC + protobuf** 协议托管 Project A，实战验证**异构、跨语言 Agent 纳管**能力。
+- **联动分工**：采用「**Worker 领任务 + Harness 跑循环 + Go 端存状态**」模式——Harness 作为无状态 Worker 主动拉取任务并执行推理循环，所有持久化事件与租约状态统一由 Go 侧 Runtime 落盘管理；protobuf 协议定义统一存放在 Kepler 仓库。
 
 ## 3. 核心模块拆解 (Core Modules)
 
@@ -115,8 +116,18 @@
 | **实时事件流**                     | **Redis Streams**（或 PG `LISTEN/NOTIFY`） | 轻量高效，负责 Runtime 向控制面/前端的 SSE 实时状态广播与异步通知。                                                                  |
 | **上下文与记忆层**                   | **OpenViking**（可插拔）                     | 专注语义检索与 L0/L1/L2 分层上下文管理，与 PG 负责的执行态持久化职责正交解耦。                                                             |
 | **安全沙箱**                      | **Docker + gVisor (`runsc`)**           | 相比原生 Docker 提供用户态内核隔离（防容器逃逸）；`systrap` 模式不强依赖 KVM，WSL2 原生可跑，配合自研 Warm Pool 解决冷启动延迟。                        |
+| **跨语言通信协议**                 | **Connect-RPC + protobuf**              | 同时兼容 gRPC 与 HTTP/JSON，Go 与 TypeScript 双端代码生成与流式通信体验一致；`.proto` 契约统一存放在 Kepler 仓库作为唯一事实来源。                           |
+| **前端交互与控制台**               | **Vite + React（双端独立，协议同源）**       | Harness 独立前端聚焦单会话对话（1 对 1）；Kepler 控制台聚焦多 Worker/多 Agent 运维、执行追踪与工具审计（1 对 N）。两者独立部署，共用同一套事件流协议语义。 |
 | **工具协议**                      | **MCP (Model Context Protocol)**        | 行业标准协议；在其之上自建 MCP Gateway 实现凭证隔离、权限校验与审计。                                                                  |
 | **可观测性与评测**                   | **OpenTelemetry (OTLP) + Langfuse**     | 通过 OTel 保持供应商中立，Langfuse 提供开箱即用的 LLM Trace 视图与评测集管理（支持 Cloud 免费版或本地自托管）。                                   |
+
+### 已确认架构决策 (Confirmed ADRs)
+
+1. **Harness 接入方式（Worker Pull + 状态外置）**：采用「**Worker 领任务 + Harness 跑循环 + Go 端存状态**」模式。Harness 保持内核独立，通过插件组合在“独立运行”与“被 Kepler 托管”之间切换；Go Runtime 负责任务队列、租约（Lease / Epoch Fencing）与事件溯源持久化。
+2. **控制/执行面协议**：采用 **Connect-RPC + protobuf** 作为 Go 底座与 TS Harness 的通信协议；用户面采用“提交命令”与“订阅 SSE 事件流（支持 `seq` / `Last-Event-ID` 断线续传）”分离的语义。
+3. **协议定义归属**：所有 `.proto` 定义统一存放在 **Kepler 主仓库**（`proto/kepler/v1/`），Harness 仓库按需生成客户端类型与桩代码，独立运行时不强依赖 Kepler 服务端。
+4. **独立前端与控制台拆分（双端独立，协议同源）**：Harness 前端（`Kepler-Harness/apps/web`）与 Kepler 控制台（`Kepler/web`）均采用 **Vite + React**，但**拆分为两个独立应用、各自在对应仓库独立部署**。Harness 前端聚焦单 Agent 对话视角（1 对 1）；Kepler 控制台聚焦多 Worker/多 Agent 的运行、审批与治理视角（1 对 N），展示 Lease/Epoch、故障接管、沙箱审计与 Trace 等工程态信息。两者不强行共享跨仓库 UI 组件库，而是共享同一套 `SessionEvent` 与 SSE 断线续传协议语义（Kepler 用户面为 Harness 用户面的超集）。
+5. **深水区攻坚优先级**：全链路 Demo 打通后，第二阶段深水区研究明确以 **Durable Runtime（持久化长任务运行时）为主、Secure Sandbox（gVisor + Warm Pool）为辅**。
 
 ## 5. 本地开发环境与零成本压测方案 (Local Dev & Testing)
 
