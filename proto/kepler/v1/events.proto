@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package kepler.v1;
+
+option go_package = "github.com/KailBug/Kepler/gen/go/kepler/v1;keplerv1";
+
+// 会话级运行状态（与 Harness @kepler/protocol 保持语义一致）
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_IDLE = 1;
+  SESSION_STATUS_RUNNING = 2;
+  SESSION_STATUS_WAITING_APPROVAL = 3;
+}
+
+// 单个 Turn 的终结状态
+enum TurnStatus {
+  TURN_STATUS_UNSPECIFIED = 0;
+  TURN_STATUS_COMPLETED = 1;
+  TURN_STATUS_MAX_STEPS = 2;
+  TURN_STATUS_SUSPENDED = 3;
+  TURN_STATUS_FAILED = 4;
+  TURN_STATUS_CANCELLED = 5;
+}
+
+message ToolCall {
+  string id = 1;
+  string name = 2;
+  // JSON 字符串格式的工具入参
+  string arguments = 3;
+}
+
+message UserEvent {
+  string text = 1;
+}
+
+message AssistantEvent {
+  string text = 1;
+  repeated ToolCall tool_calls = 2;
+}
+
+message ToolResultEvent {
+  string tool_call_id = 1;
+  string name = 2;
+  string content = 3;
+  bool is_error = 4;
+}
+
+message ApprovalRequestedEvent {
+  string tool_call_id = 1;
+  string name = 2;
+  string arguments = 3;
+  string reason = 4;
+}
+
+message ApprovalResolvedEvent {
+  string tool_call_id = 1;
+  bool approved = 2;
+  string reason = 3;
+}
+
+message TurnEndedEvent {
+  TurnStatus status = 1;
+  string error = 2;
+}
+
+// 不可变事件信封：会话 = 这些事件组成的只追加日志
+message SessionEvent {
+  string id = 1;
+  int64 seq = 2;
+  string session_id = 3;
+  string turn_id = 4;
+  int64 ts_ms = 5;
+
+  oneof payload {
+    UserEvent user = 10;
+    AssistantEvent assistant = 11;
+    ToolResultEvent tool_result = 12;
+    ApprovalRequestedEvent approval_requested = 13;
+    ApprovalResolvedEvent approval_resolved = 14;
+    TurnEndedEvent turn_ended = 15;
+  }
+}
+
+// 会话元信息（Kepler 侧在 Harness 子集基础上补充多 Agent 与运行态字段）
+message SessionInfo {
+  string id = 1;
+  string agent_id = 2;
+  string title = 3;
+  SessionStatus status = 4;
+  int64 created_at_ms = 5;
+  int64 updated_at_ms = 6;
+  int64 last_seq = 7;
+
+  // 以下为 Kepler 运行态字段，供控制台展示故障接管与归属
+  string active_worker_id = 8;
+  int64 lease_epoch = 9;
+}
