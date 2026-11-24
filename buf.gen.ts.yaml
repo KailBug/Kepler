@@ -1,0 +1,9 @@
+# 生成 TypeScript/ESM 客户端桩（目标：Kepler-Harness/packages/protocol/src/gen）
+# 使用 target=js+dts 确保 Node 24 原生 ESM 与 Vite 均可零转译直接导入（含 protobuf enum），同时保留完整 .d.ts 类型。
+version: v2
+plugins:
+  - remote: buf.build/bufbuild/es
+    out: ../Kepler-Harness/packages/protocol/src/gen
+    opt:
+      - target=js+dts
+      - import_extension=js
