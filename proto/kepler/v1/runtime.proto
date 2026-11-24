@@ -136,7 +136,7 @@ service SessionService {
   rpc ResolveApproval(ResolveApprovalRequest) returns (ResolveApprovalResponse);
   rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
   rpc CancelSession(CancelSessionRequest) returns (CancelSessionResponse);
-  rpc StreamEvents(StreamEventsRequest) returns (stream StreamEventResponse);
+  rpc StreamEvents(StreamEventsRequest) returns (stream StreamEventsResponse);
 }
 
 message CreateSessionRequest {
@@ -210,7 +210,7 @@ message StatusFrame {
   string error = 2;
 }
 
-message StreamEventResponse {
+message StreamEventsResponse {
   oneof frame {
     SessionEvent event = 1;
     DeltaFrame delta = 2;
