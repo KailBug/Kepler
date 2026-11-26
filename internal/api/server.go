@@ -7,7 +7,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"sync"
 	"time"
+
+	connect "connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 )
 
 // Server is the HTTP/Connect-RPC transport module for keplerd.
@@ -16,6 +20,8 @@ type Server struct {
 	moduleNames func() []string
 	logger      *slog.Logger
 	mux         *http.ServeMux
+	connect     *connect.Server
+	mountOnce   sync.Once
 	httpServer  *http.Server
 	listener    net.Listener
 }
@@ -29,6 +35,7 @@ func NewServer(addr string, moduleNames func() []string, logger *slog.Logger) *S
 		moduleNames: moduleNames,
 		logger:      logger,
 		mux:         http.NewServeMux(),
+		connect:     connect.NewServer(),
 	}
 	s.registerBaseRoutes()
 	return s
@@ -36,8 +43,18 @@ func NewServer(addr string, moduleNames func() []string, logger *slog.Logger) *S
 
 func (s *Server) Name() string { return "api" }
 
-// Mux exposes the underlying ServeMux so other modules can mount Connect-RPC or REST handlers.
+// Mux exposes the underlying ServeMux so other modules can mount REST/SSE handlers.
 func (s *Server) Mux() *http.ServeMux { return s.mux }
+
+// Connect exposes the shared Connect-RPC server for registering service handlers.
+func (s *Server) Connect() *connect.Server { return s.connect }
+
+// MountConnect mounts registered Connect-RPC procedures onto the HTTP mux once.
+func (s *Server) MountConnect() {
+	s.mountOnce.Do(func() {
+		connecthttp.Mount(s.mux, s.connect)
+	})
+}
 
 // Addr returns the actual bound address after Start (useful when configured with ":0").
 func (s *Server) Addr() string {
@@ -48,6 +65,7 @@ func (s *Server) Addr() string {
 }
 
 func (s *Server) Start(_ context.Context) error {
+	s.MountConnect()
 	ln, err := net.Listen("tcp", s.addr)
 	if err != nil {
 		return err
