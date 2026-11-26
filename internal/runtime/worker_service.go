@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	connect "connectrpc.com/connect/v2"
@@ -21,6 +22,7 @@ type WorkerServiceOptions struct {
 	LeaseTTL         time.Duration
 	HeartbeatMs      int64
 	PollInterval     time.Duration
+	Broadcaster      *Broadcaster
 	OnEventsAppended func(sessionID string, lastSeq int64)
 }
 
@@ -30,8 +32,10 @@ type WorkerService struct {
 	leaseTTL         time.Duration
 	heartbeatMs      int64
 	pollInterval     time.Duration
+	broadcaster      *Broadcaster
 	onEventsAppended func(sessionID string, lastSeq int64)
 	taskNotify       chan struct{}
+	taskSessions     sync.Map // taskID -> sessionID for status broadcast on task finish
 }
 
 func NewWorkerService(store Store, opts WorkerServiceOptions) *WorkerService {
@@ -52,8 +56,15 @@ func NewWorkerService(store Store, opts WorkerServiceOptions) *WorkerService {
 		leaseTTL:         leaseTTL,
 		heartbeatMs:      heartbeatMs,
 		pollInterval:     pollInterval,
+		broadcaster:      opts.Broadcaster,
 		onEventsAppended: opts.OnEventsAppended,
 		taskNotify:       make(chan struct{}, 1),
+	}
+}
+
+func (w *WorkerService) notifySession(sessionID string) {
+	if w.broadcaster != nil && sessionID != "" {
+		w.broadcaster.Notify(sessionID)
 	}
 }
 
@@ -113,6 +124,7 @@ func (w *WorkerService) AcquireTask(ctx context.Context, req *keplerv1.AcquireTa
 			return nil, mapStoreError(err)
 		}
 		if acq != nil {
+			w.taskSessions.Store(acq.Task.ID, acq.Task.SessionID)
 			pbEvents := make([]*keplerv1.SessionEvent, len(acq.Events))
 			for i, ev := range acq.Events {
 				pbEv, err := EventToProto(ev)
@@ -184,6 +196,9 @@ func (w *WorkerService) AppendEvents(ctx context.Context, req *keplerv1.AppendEv
 	if w.onEventsAppended != nil && len(events) > 0 {
 		w.onEventsAppended(req.GetSessionId(), lastSeq)
 	}
+	if len(events) > 0 {
+		w.notifySession(req.GetSessionId())
+	}
 	return &keplerv1.AppendEventsResponse{LastSeq: lastSeq}, nil
 }
 
@@ -194,6 +209,7 @@ func (w *WorkerService) CompleteTask(ctx context.Context, req *keplerv1.Complete
 	if err := w.store.CompleteTask(ctx, req.GetTaskId(), req.GetLeaseId(), req.GetEpoch()); err != nil {
 		return nil, mapStoreError(err)
 	}
+	w.notifyTaskFinished(req.GetTaskId())
 	return &keplerv1.CompleteTaskResponse{}, nil
 }
 
@@ -204,6 +220,7 @@ func (w *WorkerService) SuspendTask(ctx context.Context, req *keplerv1.SuspendTa
 	if err := w.store.SuspendTask(ctx, req.GetTaskId(), req.GetLeaseId(), req.GetEpoch(), req.GetReason()); err != nil {
 		return nil, mapStoreError(err)
 	}
+	w.notifyTaskFinished(req.GetTaskId())
 	return &keplerv1.SuspendTaskResponse{}, nil
 }
 
@@ -214,7 +231,16 @@ func (w *WorkerService) FailTask(ctx context.Context, req *keplerv1.FailTaskRequ
 	if err := w.store.FailTask(ctx, req.GetTaskId(), req.GetLeaseId(), req.GetEpoch(), req.GetError(), req.GetRetryable()); err != nil {
 		return nil, mapStoreError(err)
 	}
+	w.notifyTaskFinished(req.GetTaskId())
 	return &keplerv1.FailTaskResponse{}, nil
+}
+
+func (w *WorkerService) notifyTaskFinished(taskID string) {
+	if val, ok := w.taskSessions.LoadAndDelete(taskID); ok {
+		if sessionID, ok := val.(string); ok {
+			w.notifySession(sessionID)
+		}
+	}
 }
 
 func validateLeaseArgs(taskID, leaseID string, epoch int64) error {

@@ -19,14 +19,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// runtimeModule manages the Durable Runtime store lifecycle and mounts WorkerService.
+// runtimeModule manages the Durable Runtime store lifecycle and mounts Worker/Session services.
 type runtimeModule struct {
-	cfg    config.Config
-	srv    *api.Server
-	logger *slog.Logger
-	pool   *pgxpool.Pool
-	store  runtime.Store
-	worker *runtime.WorkerService
+	cfg         config.Config
+	srv         *api.Server
+	logger      *slog.Logger
+	pool        *pgxpool.Pool
+	store       runtime.Store
+	broadcaster *runtime.Broadcaster
+	worker      *runtime.WorkerService
+	sessions    *runtime.SessionService
 }
 
 func (m *runtimeModule) Name() string { return "runtime" }
@@ -57,8 +59,22 @@ func (m *runtimeModule) Start(ctx context.Context) error {
 		return fmt.Errorf("unsupported KEPLER_STORE %q (expected postgres or memory)", m.cfg.StoreBackend)
 	}
 
-	m.worker = runtime.NewWorkerService(m.store, runtime.WorkerServiceOptions{})
+	m.broadcaster = runtime.NewBroadcaster()
+	m.worker = runtime.NewWorkerService(m.store, runtime.WorkerServiceOptions{
+		Broadcaster: m.broadcaster,
+	})
+	m.sessions = runtime.NewSessionService(m.store, runtime.SessionServiceOptions{
+		Broadcaster:   m.broadcaster,
+		OnTaskCreated: m.worker.NotifyNewTask,
+	})
+
 	keplerv1connect.RegisterWorkerServiceHandler(m.srv.Connect(), m.worker)
+	keplerv1connect.RegisterSessionServiceHandler(m.srv.Connect(), m.sessions)
+	api.MountSessionRoutes(m.srv.Mux(), api.SessionRoutesOptions{
+		Store:         m.store,
+		Broadcaster:   m.broadcaster,
+		OnTaskCreated: m.worker.NotifyNewTask,
+	})
 	return nil
 }
 
