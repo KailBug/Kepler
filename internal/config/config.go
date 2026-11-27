@@ -7,7 +7,9 @@ type Config struct {
 	HTTPAddr       string
 	StoreBackend   string // "postgres" | "memory"
 	DatabaseURL    string
-	SandboxRuntime string
+	SandboxRuntime string // "runc" | "runsc"
+	SandboxImage   string
+	DockerCmd      string // e.g. "docker" (Linux/WSL2) or "wsl -e docker" (Windows -> WSL2)
 	LogLevel       string
 }
 
@@ -18,6 +20,8 @@ func LoadFromEnv() Config {
 		StoreBackend:   envOrDefault("KEPLER_STORE", "postgres"),
 		DatabaseURL:    envOrDefault("KEPLER_DATABASE_URL", "postgres://kepler:kepler_dev_password@127.0.0.1:5432/kepler?sslmode=disable"),
 		SandboxRuntime: envOrDefault("KEPLER_SANDBOX_RUNTIME", "runc"),
+		SandboxImage:   envOrDefault("KEPLER_SANDBOX_IMAGE", "python:3.12-alpine"),
+		DockerCmd:      envOrDefault("KEPLER_DOCKER_CMD", "docker"),
 		LogLevel:       envOrDefault("KEPLER_LOG_LEVEL", "info"),
 	}
 }
