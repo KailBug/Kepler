@@ -2,8 +2,12 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrTimeout is returned when sandbox command execution exceeds its timeout.
+var ErrTimeout = errors.New("sandbox execution timed out")
 
 // Spec defines resource and isolation constraints when acquiring a sandbox instance.
 type Spec struct {
@@ -13,6 +17,22 @@ type Spec struct {
 	ReadOnly    bool
 	MemoryMB    int64
 	CPUMilli    int64
+	PIDsLimit   int64
+	TmpfsMB     int64
+}
+
+// DefaultSpec returns a hardened sandbox specification suitable for untrusted code execution.
+func DefaultSpec(runtime string) Spec {
+	return Spec{
+		Image:       "python:3.12-alpine",
+		Runtime:     runtime,
+		NetworkMode: "none",
+		ReadOnly:    true,
+		MemoryMB:    256,
+		CPUMilli:    500,
+		PIDsLimit:   64,
+		TmpfsMB:     64,
+	}
 }
 
 // Lease represents an acquired sandbox instance.
@@ -27,15 +47,17 @@ type ExecRequest struct {
 	Command []string
 	WorkDir string
 	Env     map[string]string
+	Stdin   string
 	Timeout time.Duration
 }
 
 // ExecResult captures bounded output and exit status from sandbox execution.
 type ExecResult struct {
-	ExitCode int
-	Stdout   string
-	Stderr   string
-	Duration time.Duration
+	ExitCode  int
+	Stdout    string
+	Stderr    string
+	Truncated bool
+	Duration  time.Duration
 }
 
 // Provider decouples the runtime and MCP Gateway from concrete sandbox technologies
