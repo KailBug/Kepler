@@ -12,6 +12,7 @@ import (
 	"github.com/KailBug/Kepler/gen/go/kepler/v1/keplerv1connect"
 	"github.com/KailBug/Kepler/internal/api"
 	"github.com/KailBug/Kepler/internal/config"
+	"github.com/KailBug/Kepler/internal/gateway"
 	"github.com/KailBug/Kepler/internal/module"
 	"github.com/KailBug/Kepler/internal/runtime"
 	"github.com/KailBug/Kepler/internal/runtime/memory"
@@ -31,7 +32,8 @@ type runtimeModule struct {
 	sessions    *runtime.SessionService
 }
 
-func (m *runtimeModule) Name() string { return "runtime" }
+func (m *runtimeModule) Name() string        { return "runtime" }
+func (m *runtimeModule) Pool() *pgxpool.Pool { return m.pool }
 
 func (m *runtimeModule) Start(ctx context.Context) error {
 	switch m.cfg.StoreBackend {
@@ -85,20 +87,35 @@ func (m *runtimeModule) Stop(_ context.Context) error {
 	return nil
 }
 
+func buildServer(cfg config.Config, logger *slog.Logger) (*module.Registry, *api.Server, error) {
+	reg := module.NewRegistry()
+	srv := api.NewServer(cfg.HTTPAddr, reg.Names, logger)
+	rt := &runtimeModule{cfg: cfg, srv: srv, logger: logger}
+	gw := gateway.NewModule(gateway.ModuleOptions{
+		Mux:            srv.Mux(),
+		Logger:         logger,
+		PoolProvider:   rt.Pool,
+		DockerCmd:      cfg.DockerCmd,
+		SandboxRuntime: cfg.SandboxRuntime,
+		SandboxImage:   cfg.SandboxImage,
+		ProxyTargets:   cfg.ProxyTargets,
+	})
+
+	for _, mod := range []module.Module{rt, gw, srv} {
+		if err := reg.Register(mod); err != nil {
+			return nil, nil, fmt.Errorf("register module %q: %w", mod.Name(), err)
+		}
+	}
+	return reg, srv, nil
+}
+
 func main() {
 	cfg := config.LoadFromEnv()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	reg := module.NewRegistry()
-	srv := api.NewServer(cfg.HTTPAddr, reg.Names, logger)
-	rt := &runtimeModule{cfg: cfg, srv: srv, logger: logger}
-
-	if err := reg.Register(rt); err != nil {
-		logger.Error("register runtime module failed", "error", err)
-		os.Exit(1)
-	}
-	if err := reg.Register(srv); err != nil {
-		logger.Error("register api module failed", "error", err)
+	reg, _, err := buildServer(cfg, logger)
+	if err != nil {
+		logger.Error("keplerd assemble failed", "error", err)
 		os.Exit(1)
 	}
 
