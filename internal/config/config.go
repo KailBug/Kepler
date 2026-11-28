@@ -10,6 +10,7 @@ type Config struct {
 	SandboxRuntime string // "runc" | "runsc"
 	SandboxImage   string
 	DockerCmd      string // e.g. "docker" (Linux/WSL2) or "wsl -e docker" (Windows -> WSL2)
+	ProxyTargets   string // optional JSON array of gateway.CredentialBinding
 	LogLevel       string
 }
 
@@ -22,6 +23,7 @@ func LoadFromEnv() Config {
 		SandboxRuntime: envOrDefault("KEPLER_SANDBOX_RUNTIME", "runc"),
 		SandboxImage:   envOrDefault("KEPLER_SANDBOX_IMAGE", "python:3.12-alpine"),
 		DockerCmd:      envOrDefault("KEPLER_DOCKER_CMD", "docker"),
+		ProxyTargets:   os.Getenv("KEPLER_PROXY_TARGETS"),
 		LogLevel:       envOrDefault("KEPLER_LOG_LEVEL", "info"),
 	}
 }
